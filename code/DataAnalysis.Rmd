@@ -25,12 +25,14 @@ library(reshape2)
 
 ### Read data
 
-```{r load_data, cache = TRUE}
+```{r load_data, cache = FALSE}
 source("../code/FSR_0funcs.R")
 counts <- read_delim("../raw-data/htseq_read_counts_51_samples_SSC11.1.csv", delim = ",")
+
 counts <- data.frame(counts)
 colnames(counts) <- gsub("X", "", colnames(counts))
 rownames(counts) <- counts$`1`
+counts <- counts[-c((nrow(counts) - 4):nrow(counts)),]
 metadata <- covset <- read_delim("../raw-data/covset_Tonsil_RNAseq_51samples.csv", delim = ",")
 covset$Isolate <- as.character(covset$Isolate)
 covset$TVClass <- as.character(covset$TVClass)
@@ -225,6 +227,7 @@ VoomPvWithQualityWeights <- function(counts, AllCov){
   qvs <- apply(pvs, 2, function(x)jabes.q(x))
   colnames(pvs) <- colnames(qvs) <- colnames(AllCov)
   rownames(fit$coef) <- rownames(pvs) <- rownames(qvs) <- rownames(counts)
+  
 
   ic <- limmaIC(vout, fit)
   res <- list(y = vout$E,
@@ -260,7 +263,7 @@ ggsave(p, filename = "../output/FinalModel_Histogram_voomWithQualityWeights.png"
 
 ```{r save_result}
 
-write.csv(voutf$Beta[,-1], file = "../output/FinalModel_log2fc_voomWithQualityWeights.csv")
+write.csv(voutf$Beta[,-1], file = "../output/FinalModel_log2fc_voomWithQualityWeights.csv", row.names = TRUE)
 write.csv(voutf$pvs, file = "../output/FinalModel_pvalues_voomWithQualityWeights.csv")
 write.csv(voutf$qvs, file = "../output/FinalModel_qvalues_voomWithQualityWeights.csv")
 ```
@@ -337,6 +340,8 @@ p <- pcaplot2(dataset = y_TVClass, title.name = "PCA_TVClass", Effect ="TVClass"
 
 ggsave(p, filename = "../output/FinalModel_PCA_adjusted_data_except_TVClass_voomWithQualityWeights.png")
 ggplotly(p)
+
+
 ```
 
 ### Adjusted data (adjusted for everything except $WUR$)
