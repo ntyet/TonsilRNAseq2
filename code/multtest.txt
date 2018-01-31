@@ -1,0 +1,168 @@
+estimate.m0=function(p, B = 20)
+{
+#
+#This function estimates the number of true null hypotheses given a vector of p-values
+#using the method of Nettleton et al. (2006) JABES 11, 337-356.
+#The estimate obtained is identical to the estimate obtained by the iterative
+#procedure described by Mosig et al. Genetics 157:1683-1698.
+#The number of p-values falling into B equally sized bins are counted.
+#The count of each bin is compared to the average of all the bin counts associated
+#with the current bins and all bins to its right.  Working from left to right, 
+#the first bin that has a count less than or equal to the average is identified.
+#That average is multiplied by the total number of bins to obtain an estimate of m0, 
+#the number of tests for which the null hypothesis is true.
+#
+  m <- length(p)
+  m0 <- m
+  bin <- c(-0.1, (1:B)/B)
+  bin.counts=rep(0,B)
+  for(i in 1:B){
+    bin.counts[i]=sum((p>bin[i])&(p<=bin[i+1]))
+  }
+  tail.means <- rev(cumsum(rev(bin.counts))/(1:B))
+  temp <- bin.counts - tail.means
+  index <- min((1:B)[temp <= 0])
+  m0 <- B * tail.means[index]
+  return(m0)
+}
+
+jabes.q=function(p,B=20)
+{
+#
+#This function computes q-values using the approach of Nettleton et al.
+#(2006) JABES 11, 337-356.
+#
+#Author: Dan Nettleton
+#
+  
+  m = length(p)
+  m0=estimate.m0(p,B)
+  k = 1:m
+  ord = order(p)
+  p[ord] = (p[ord] * m0)/(1:m)
+  qval = p
+  qval[ord]=rev(cummin(rev(qval[ord])))
+  return(qval)
+}
+
+
+
+ub.mix=
+function(x,start=c(.6,1,4)){
+#
+#The method of Allison et al. (2002) CSDA is used to model the
+#p-value distribution as a mixture of a uniform and another beta
+#distribution.  The mixing proportion on the uniform (pi0) is an
+#estimate of the proportion of true null hypotheses.
+#
+#This code is adapted from code provided by Gary Gadbury.
+#
+#The starting values were provided by Gary's group, but they
+#may need to be changed dependending on the problem.
+#Always check the fit of the estimated distribution using
+#the function plot.ub.mix.
+#
+#The function returns a vector that contains estimates of
+#pi0, alpha, and beta in that order.
+#
+  mix.obj1<-function(p,x){
+  # This object is the objective function for a mixture of a uniform
+  # and one beta distribution
+  #
+    e=p[1] + (1-p[1])*(gamma(p[2]+p[3])
+      /(gamma(p[2])*gamma(p[3])))*x^(p[2]-1)*(1-x)^(p[3]-1)
+    sle=-sum(log(e))
+    return(sle)
+  }
+  return(optim(start,mix.obj1,lower=c(.001,.01,.01),
+     upper=c(1,170,170),method="L-BFGS-B",x = x)$par)
+}
+
+plot.ub.mix=
+function (p,parms=NULL,nclass=20) 
+{
+#
+#This function plots the estimated uniform-beta mixture density
+#over a histogram of p-values.
+#
+#The first argument p is a required vector of p-values.
+#The second argument is a vector which contains estimates
+#of pi0, alpha, and beta.  If no vector is supplied, one
+#will be estimated using the function ub.mix.  The third
+#argument specifies the number of bins for the histogram.
+#
+  if(is.null(parms)){
+    parms=ub.mix(p)
+  }
+  x=0:1000/1000
+  hist(p,probability=T,col=4,nclass=nclass)
+  box()
+  lines(x,parms[1]+(1-parms[1])*dbeta(x,parms[2],parms[3]),col=2,lwd=2)
+  lines(c(0,1),rep(parms[1],2),lty=2,col=2,lwd=2)
+}
+
+ppde=
+function (p,parms=NULL) 
+{
+#
+#p is a vector of p-values
+#parms is a vector containing estimates of pi0, alpha, and beta
+#from a uniform-beta mixture model fit the the p-values.
+#If parms is not specified, it will be estimated using ub.mix.
+#
+  if(is.null(parms)){
+    parms=ub.mix(p)
+  }
+  pi0=parms[1]
+  pi1=1-pi0
+  a=parms[2]
+  b=parms[3]
+  return(1/(pi0/(pi1*dbeta(p,a,b))+1))  
+}
+
+
+q.value=
+function(p, lambda=seq(0,0.95,0.05)) {
+#
+#This is Storey and Tibshirani's (PNAS, 2003) default method
+#for determining the q-values.
+#
+#Code was originally obtained from John Storey's Web site.
+#It has been edited slightly.
+#
+  m<-length(p) 
+  pi0 <- rep(0,length(lambda))
+  for(i in 1:length(lambda)) {
+    pi0[i] <- mean(p >= lambda[i])/(1-lambda[i])
+  }
+  spi0 <- smooth.spline(lambda,pi0,df=3)
+  pi0 <- max(predict(spi0,x=1)$y,0)
+  pi0 <- min(pi0,1)
+  u <- order(p)
+  v <- rank(p)
+  qvalue <- pi0*m*p/v
+  qvalue[u[m]] <- min(qvalue[u[m]],1)
+  for(i in (m-1):1) {
+    qvalue[u[i]] <- min(qvalue[u[i]],qvalue[u[i+1]],1)
+  }
+  return(qvalue)
+}
+
+
+bh.fdr=
+function(p)
+{
+#
+#This function computes q-values using Benjamini and Hochberg's (1995)
+#approach for controlling FDR.
+#
+  m = length(p)
+  k = 1:m
+  ord = order(p)
+  p[ord] = (p[ord] * m)/(1:m)
+  qval = p
+  qval[ord]=rev(cummin(rev(qval[ord])))
+  return(qval)
+}
+
+

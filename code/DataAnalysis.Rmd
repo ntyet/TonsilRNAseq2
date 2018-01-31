@@ -1,0 +1,370 @@
+---
+title: "Tonsil RNAseq"
+output: 
+  html_notebook:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(ggplot2)
+library(plotly)
+library(patchwork)
+library(tidyverse)
+```
+
+## Exploratory Data Analysis
+
+### Read data
+
+```{r load_data, cache = TRUE}
+source("../code/FSR_0funcs.R")
+counts <- read_delim("../raw-data/htseq_read_counts_51_samples_SSC11.1.csv", delim = ",")
+counts <- data.frame(counts)
+colnames(counts) <- gsub("X", "", colnames(counts))
+rownames(counts) <- counts$`1`
+metadata <- covset <- read_delim("../raw-data/covset_Tonsil_RNAseq_51samples.csv", delim = ",")
+
+```
+
+
+Check the lib size
+
+First we exclude low expressed genes and genes with many zeros, in particular, we only 
+analyze genes whose mean expression at least 8 and number of nonzero counts larger than 3. 
+The analyzed counts data has `r nrow(counts)` rows genes and `r ncol(counts)` samples
+
+## Some exploratory analysis
+
+### 75 Quantiles of the `r ncol(counts)` samples
+
+
+```{r plot_quantile}
+counts <- counts[rowMeans(counts[,-1]) >8, -1]
+quantoff <- data.frame(Upperquartiles = log10(apply(counts, 2, quantile, .75)), 
+                       Name = covset$Animal,
+                       Isolate = covset$Isolate,
+                       TVClass = covset$TVClass,
+                       WUR = covset$WUR,
+                       Index = 1:ncol(counts2))
+
+
+p0 <- ggplot(data = quantoff, aes(x = Index, y = Upperquartiles, 
+                                  label = Name, color= Isolate, shape = TVClass, 
+                                  size = WUR)) + geom_point()
+p0
+ ggplotly()
+
+
+```
+
+
+
+
+
+### Library Size of All `r ncol(counts)` Samples
+
+
+```{r}
+quantoff <- data.frame(LibSize = log10(apply(counts, 2, sum)), 
+                       Name = covset$Animal,
+                       Isolate = as.character(covset$Isolate),
+                       TVClass = as.character(covset$TVClass),
+                       WUR = as.character(covset$WUR),
+                       Index = 1:ncol(counts2))
+
+
+p0 <- ggplot(data = quantoff, aes(x = Index, y = LibSize, 
+                                  label = Name, color= Isolate, shape = TVClass)) + geom_point()
+p0
+ggplotly()
+
+
+```
+
+
+
+### Plot empirical cdfs
+
+```{r}
+library(reshape2)
+counts <- counts2
+df <- melt(log10(counts+0.5))
+
+p <- ggplot(df, aes(x= value, colour = variable)) + stat_ecdf()
+p
+```
+
+
+### PCA - logcpm Data Unadjusted for Covariates, Adjusted for Upper Quanrtile
+
+```{r}
+library(limma)
+covset$Isolate <- as.character(covset$Isolate)
+covset$TVClass <- as.character(covset$TVClass)
+covset$WUR <- as.character(covset$WUR)
+
+
+pcaplot <- function(dataset, title.name= "PCA Plot"){
+  pca <- prcomp(t(dataset), scale = F)
+  percenvar <- round(100*pca$sdev^2/sum(pca$sdev^2),1)
+  dataGG <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2],
+                       PC3 = pca$x[,3],
+                       percenvar = percenvar,
+                       Name = covset$Animal,
+                       Isolate = covset$Isolate,
+                       TVClass = covset$TVClass,
+                       WUR = covset$WUR)
+  rownames(dataGG) <- covset$Animal
+  p <- ggplot(data = dataGG, aes(x = PC1, y = PC2, 
+                                 color = Isolate, shape = TVClass, label = Name)) + 
+    geom_point(size = I(2))+ 
+    ggplot2::ggtitle(title.name)+
+    ggplot2::xlab(label =paste0("PC1, VarExp:", round(percenvar[1],1) ))+
+    ggplot2::ylab((label = paste0("PC2, VarExp:", round(percenvar[2],1)))) # + geom_text()
+p
+}
+vout1 <- voom(counts = counts, lib.size = apply(counts, 2, quantile, .75))
+
+
+p1 <- pcaplot(dataset = vout1$E, title.name = "Upper Quantile")
+p1 
+ggplotly()
+
+```
+
+
+
+
+
+
+
+
+
+
+## VoomWithWeights
+
+Since library sizes vary alot from sample to sample, we use `voomWithQualityWeights()` instead of `voom()`. The covariates are `Isolate, TVClass, WUR, RIN, Sex`.
+### 2 and 3-way interaction among $Isolate, TVClass, WUR$
+Next we consider the 2-way and 3-way interactions among $Isolate, TVClass, WUR$.
+
+
+
+```{r}
+AllCov0 <- cbind(FixCov, covset["RIN"])
+dm <- model.matrix(formula(paste0("~0+", paste0(names(AllCov0), collapse = "+"))), data = AllCov0)
+I_TV_WUR <- makeContrasts(ITVWUR1H0 - ITVWUR2H0 - ITVWUR1L0 + ITVWUR2L0 - ITVWUR1H1+ITVWUR2H1+ITVWUR1L1 - ITVWUR2L1, levels = dm)
+colnames(I_TV_WUR) <- "I_TV_WUR" # 3 way interaction
+
+I_TV <- makeContrasts(ITVWUR1H0/2 - ITVWUR2H0/2 - ITVWUR1L0/2 + ITVWUR2L0/2 + ITVWUR1H1/2 - ITVWUR2H1/2 - ITVWUR1L1/2 + ITVWUR2L1/2, levels = dm)
+colnames(I_TV) <- "I_TV" # Isolate: TVClass
+
+I_WUR <- makeContrasts(ITVWUR1H0/2 - ITVWUR2H0/2 + ITVWUR1L0/2 - ITVWUR2L0/2 - ITVWUR1H1/2+ITVWUR2H1/2-ITVWUR1L1/2 + ITVWUR2L1/2, levels = dm)
+colnames(I_WUR) <- "I_WUR" # Isolate:WUR
+
+TV_WUR <- makeContrasts(ITVWUR1H0/2 + ITVWUR2H0/2 - ITVWUR1L0/2 - ITVWUR2L0/2 - ITVWUR1H1/2-ITVWUR2H1/2+ITVWUR1L1/2 + ITVWUR2L1/2, levels = dm)
+colnames(TV_WUR) <- "TV_WUR" # TVClass:WUR
+
+Interaction_Test <- list(I_TV_WUR=I_TV_WUR,I_TV=I_TV,I_WUR=I_WUR, TV_WUR =TV_WUR)
+vout <- voomWithQualityWeights(counts = counts, design = dm, lib.size = apply(counts, 2, quantile, .75), plot = F)
+fit <- lmFit(vout)
+int_plot <- llply(1:4, function(i){
+  fit1 <- contrasts.fit(fit, contrasts =Interaction_Test[i][[1]])
+  fit1 <- eBayes(fit1)
+  tt <- topTableF(fit1, sort ="none", n = Inf)
+  pv <- tt$P.Value
+  qv <- jabes.q(pv)
+  pv <- data.frame(pv)
+  p <- ggplot(data = pv, aes(x = pv))+geom_histogram( breaks=seq(0,1,by=0.01))+
+    ggplot2::xlab("pvalue")+
+    ggplot2::ggtitle(paste0(names(Interaction_Test[i]), ", #q.05=", sum(qv <=.05)))+
+    ggplot2:: theme(plot.title = element_text(hjust = 0.5))
+  p
+  
+})
+gridExtra::grid.arrange(int_plot[[1]],int_plot[[2]],int_plot[[3]],int_plot[[4]])
+ggsave(gridExtra::grid.arrange(int_plot[[1]],int_plot[[2]],int_plot[[3]],int_plot[[4]]),
+       filename = "../output/Interaction_Plot_voomWithQualityWeights.png")
+```
+
+This implies that 2-way and 3-way interactions are not significant.
+
+## Selected Model ($Isolate, TVClass, WUR, Sex, RIN$)
+Now the Selected Model only has additive effects of $Isolate, TVClass, WUR, sex, RIN$.
+
+
+```{r}
+VoomPvWithQualityWeights <- function(counts, AllCov){
+  dm <- model.matrix(formula(paste0("~", paste0(names(AllCov), collapse = "+"))), data = AllCov)
+  colnames(dm)[1] <- "Intercept"
+  vout <- voomWithQualityWeights(counts = counts, design = dm, lib.size = apply(counts, 2, quantile, .75), plot = F)
+  fit <- lmFit(vout)
+  fit2 <- eBayes(fit)
+  pvs <- ldply(1:ncol(AllCov), function(i){
+    if(is.factor(AllCov[,i]) | is.character(AllCov[,i])) {
+      ct <- paste0(grep(paste0(names(AllCov)[i]),  x = colnames(dm), value = T), collapse = ",  ")
+    }else{
+      ct <- paste0(grep(paste0(names(AllCov)[i], "$"),  x = colnames(dm), value = T), collapse = ",  ")
+    }
+    C.matrix <- eval(parse(text=paste0("makeContrasts(",  ct, ",levels = dm)")))
+    fit1 <- contrasts.fit(fit, contrasts =C.matrix)
+    fit1 <- eBayes(fit1)
+    tt <- topTableF(fit1, sort ="none", n = Inf)
+    pv <- tt$P.Value
+  })
+  pvs <- t(pvs)
+  qvs <- apply(pvs, 2, function(x)jabes.q(x))
+  colnames(pvs) <- colnames(qvs) <- colnames(AllCov)
+  rownames(fit$coef) <- rownames(pvs) <- rownames(qvs) <- rownames(counts)
+
+  ic <- limmaIC(vout, fit)
+  res <- list(y = vout$E,
+              pvs = pvs, #VoomOut  = vout,
+              qvs = qvs,
+              Beta = fit$coef,
+              Yhat = fit$coef%*%t(vout$design),
+              lib.size = vout$targets$lib.size,
+              weights = vout$weights,
+              sample.weights = vout$sample.weights,
+              sigma = fit$sigma,
+              s2.post = fit2$s2.post,
+              df.prior = fit2$df.prior,
+              s2.prior = fit2$s2.prior,
+              df.total = fit2$df.total,
+              design = vout$design,
+              aic = ic["aic"], bic = ic["bic"])
+  res
+}
+```
+
+
+### Histogram of $p$-values
+```{r final_model}
+voutf <- VoomPvWithQualityWeights(counts = counts, AllCov = cbind(covset[, c("Isolate", "TVClass", "WUR", "Sex", "RIN")]))
+p <- PlotVoomPv(voutf, FDR.level = .05, bin.width = .01, title.name = "Selected Model")
+p
+ggsave(p, filename = "../output/FinalModel_Histogram_voomWithQualityWeights.png", width = 6, height = 3)
+```
+
+### Save $p$-, $q$-values and log2fc
+
+
+```{r save_result}
+
+write.csv(voutf$Beta[,-1], file = "../output/FinalModel_log2fc_voomWithQualityWeights.csv")
+write.csv(voutf$pvs, file = "../output/FinalModel_pvalues_voomWithQualityWeights.csv")
+write.csv(voutf$qvs, file = "../output/FinalModel_qvalues_voomWithQualityWeights.csv")
+```
+
+### Volcano plot of the Selected Model 
+```{r vocalno_plot}
+log2fc <- voutf$Beta[,-1]
+colnames(log2fc) <- c("Isolate" ,"TVClass", "WUR",     "Sex" ,    "RIN" )
+#which.max(log2fc[,"Sex"]) # this gene is highly significant w.r.t sex, but not with the others
+log2fcs = melt(log2fc[-which.max(log2fc[,"Sex"]),])
+colnames(log2fcs) <- c("Gene", "Effect", "log2fc")
+pvs <- melt(voutf$pvs[-which.max(log2fc[,"Sex"]),])  
+ 
+colnames(pvs) <- c("Gene", "Effect", "pvalue")
+
+
+  p.fc.all <- cbind(pvs, log2fc = log2fcs$log2fc)
+  
+  p <- ggplot2::ggplot(data = p.fc.all, aes(x = log2fc, y = -log10(pvalue))) +
+    ggplot2::geom_point(pch = 16, size = .2)+
+    ggplot2::facet_grid(~Effect)+
+    ggtitle(label = "Volcano Plot") + 
+    ggplot2::geom_hline( yintercept = 2)
+  p
+  ggsave(p, filename = "../output/FinalModel_VolcanoPlot_voomWithQualityWeights.png", width = 8, height = 4)
+
+
+```
+
+###  Adjusted data (adjusted for everything except $Isolate$)
+```{r}
+pcaplot2 <- function(dataset, title.name= "PCA Plot", Effect = "Isolate"){
+  pca <- prcomp(t(dataset), scale = F)
+  percenvar <- round(100*pca$sdev^2/sum(pca$sdev^2),1)
+  dataGG <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2],
+                       percenvar = percenvar,
+                       Name = covset$Animal,
+                       Isolate = covset$Isolate,
+                       TVClass = covset$TVClass,
+                       WUR = covset$WUR)
+  rownames(dataGG) <- covset$Animal
+  p1 <- ggplot(data = dataGG, aes(x = PC1, y = PC2, color = Isolate, label = Name)) + 
+    geom_point(size = I(1))+ 
+    ggplot2::ggtitle(title.name)+
+    ggplot2::xlab(label =paste0("PC1, VarExp:", round(percenvar[1],1) ))+
+    ggplot2::ylab((label = paste0("PC2, VarExp:", round(percenvar[2],1))))
+  p2 <- ggplot(data = dataGG, aes(x = PC1, y = PC2, color = TVClass, label = Name)) + 
+    geom_point(size = I(1))+ 
+    ggplot2::ggtitle(title.name)+
+    ggplot2::xlab(label =paste0("PC1, VarExp:", round(percenvar[1],1) ))+
+    ggplot2::ylab((label = paste0("PC2, VarExp:", round(percenvar[2],1))))
+  p3 <- ggplot(data = dataGG, aes(x = PC1, y = PC2, color = WUR, label = Name)) + 
+    geom_point(size = I(1))+ 
+    ggplot2::ggtitle(title.name)+
+    ggplot2::xlab(label =paste0("PC1, VarExp:", round(percenvar[1],1) ))+
+    ggplot2::ylab((label = paste0("PC2, VarExp:", round(percenvar[2],1))))
+  if(Effect =="Isolate"){p <- p1}else if(Effect =="TVClass"){p <- p2} else {p <- p3}
+  p
+}
+
+y_Isolate <- voutf$y - voutf$Beta[, -c(1,2)]%*%t(voutf$design[,-c(1,2)])
+write.csv(y_Isolate, file = "../output/FinalModel_adjusted_except_Isolate_voomWithQualityWeights.csv")
+p <- pcaplot2(dataset = y_Isolate, title.name = "PCA_Isolate", Effect = "Isolate")
+ggplotly(p)
+ggsave(p, filename = "../output/FinalModel_PCA_adjusted_data_except_Isolate_voomWithQualityWeights.png")
+```
+
+### Adjusted data (adjusted for everything except $TVClass$)
+```{r}
+
+y_TVClass <- voutf$y - voutf$Beta[, -c(1,3)]%*%t(voutf$design[,-c(1,3)])
+write.csv(y_TVClass, file = "../output/FinalModel_adjusted_except_TVClass_voomWithQualityWeights.csv")
+p <- pcaplot2(dataset = y_TVClass, title.name = "PCA_TVClass", Effect ="TVClass")
+
+ggsave(p, filename = "../output/FinalModel_PCA_adjusted_data_except_TVClass_voomWithQualityWeights.png")
+ggplotly(p)
+```
+
+### Adjusted data (adjusted for everything except $WUR$)
+```{r}
+
+y_WUR <- voutf$y - voutf$Beta[, -c(1,4)]%*%t(voutf$design[,-c(1,4)])
+write.csv(y_WUR, file = "../output/FinalModel_adjusted_except_WUR_voomWithQualityWeights.csv")
+p <- pcaplot2(dataset = y_WUR, title.name = "PCA_WUR", Effect = "WUR")
+ggplotly(p)
+ggsave(p, filename = "../output/FinalModel_PCA_adjusted_data_except_WUR_voomWithQualityWeights.png")
+```
+
+
+
+<!-- ### Check some genes -->
+
+<!-- ```{r} -->
+<!-- voutf$pvs <- data.frame(voutf$pvs) -->
+<!-- ixd <- sort(voutf$pvs$Isolate, index.return = T)$ix -->
+<!-- ggplot(data = data.frame(y = y_Isolate[ixd[200],], Isolate = as.character(covset$Isolate), -->
+<!--                          TVClass = as.character(covset$TVClass),  -->
+<!--                          WUR = as.character(covset$WUR))) +  -->
+<!--          geom_point(mapping = aes(y = y, x = Isolate)) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- ixd <- sort(voutf$pvs$TVClass, index.return = T)$ix -->
+<!-- ggplot(data = data.frame(y = y_TVClass[ixd[1000],], Isolate = as.character(covset$Isolate), -->
+<!--                          TVClass = as.character(covset$TVClass),  -->
+<!--                          WUR = as.character(covset$WUR))) +  -->
+<!--          geom_point(mapping = aes(y = y, x = TVClass)) -->
+<!-- ``` -->
+
