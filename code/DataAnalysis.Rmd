@@ -17,6 +17,8 @@ library(ggplot2)
 library(plotly)
 library(patchwork)
 library(tidyverse)
+library(limma)
+library(reshape2)
 ```
 
 ## Exploratory Data Analysis
@@ -30,7 +32,9 @@ counts <- data.frame(counts)
 colnames(counts) <- gsub("X", "", colnames(counts))
 rownames(counts) <- counts$`1`
 metadata <- covset <- read_delim("../raw-data/covset_Tonsil_RNAseq_51samples.csv", delim = ",")
-
+covset$Isolate <- as.character(covset$Isolate)
+covset$TVClass <- as.character(covset$TVClass)
+covset$WUR <- as.character(covset$WUR)
 ```
 
 
@@ -52,7 +56,7 @@ quantoff <- data.frame(Upperquartiles = log10(apply(counts, 2, quantile, .75)),
                        Isolate = covset$Isolate,
                        TVClass = covset$TVClass,
                        WUR = covset$WUR,
-                       Index = 1:ncol(counts2))
+                       Index = 1:ncol(counts))
 
 
 p0 <- ggplot(data = quantoff, aes(x = Index, y = Upperquartiles, 
@@ -77,7 +81,7 @@ quantoff <- data.frame(LibSize = log10(apply(counts, 2, sum)),
                        Isolate = as.character(covset$Isolate),
                        TVClass = as.character(covset$TVClass),
                        WUR = as.character(covset$WUR),
-                       Index = 1:ncol(counts2))
+                       Index = 1:ncol(counts))
 
 
 p0 <- ggplot(data = quantoff, aes(x = Index, y = LibSize, 
@@ -93,8 +97,8 @@ ggplotly()
 ### Plot empirical cdfs
 
 ```{r}
-library(reshape2)
-counts <- counts2
+
+counts <- counts
 df <- melt(log10(counts+0.5))
 
 p <- ggplot(df, aes(x= value, colour = variable)) + stat_ecdf()
@@ -105,7 +109,6 @@ p
 ### PCA - logcpm Data Unadjusted for Covariates, Adjusted for Upper Quanrtile
 
 ```{r}
-library(limma)
 covset$Isolate <- as.character(covset$Isolate)
 covset$TVClass <- as.character(covset$TVClass)
 covset$WUR <- as.character(covset$WUR)
@@ -130,10 +133,10 @@ pcaplot <- function(dataset, title.name= "PCA Plot"){
     ggplot2::ylab((label = paste0("PC2, VarExp:", round(percenvar[2],1)))) # + geom_text()
 p
 }
-vout1 <- voom(counts = counts, lib.size = apply(counts, 2, quantile, .75))
+vout <- voom(counts = counts, lib.size = apply(counts, 2, quantile, .75))
 
 
-p1 <- pcaplot(dataset = vout1$E, title.name = "Upper Quantile")
+p1 <- pcaplot(dataset = vout$E, title.name = "Upper Quantile")
 p1 
 ggplotly()
 
@@ -157,7 +160,7 @@ Next we consider the 2-way and 3-way interactions among $Isolate, TVClass, WUR$.
 
 
 ```{r}
-AllCov0 <- cbind(FixCov, covset["RIN"])
+AllCov0 <- cbind(covset[c("ITVWUR", "RIN", "Sex")])
 dm <- model.matrix(formula(paste0("~0+", paste0(names(AllCov0), collapse = "+"))), data = AllCov0)
 I_TV_WUR <- makeContrasts(ITVWUR1H0 - ITVWUR2H0 - ITVWUR1L0 + ITVWUR2L0 - ITVWUR1H1+ITVWUR2H1+ITVWUR1L1 - ITVWUR2L1, levels = dm)
 colnames(I_TV_WUR) <- "I_TV_WUR" # 3 way interaction
@@ -344,6 +347,8 @@ write.csv(y_WUR, file = "../output/FinalModel_adjusted_except_WUR_voomWithQualit
 p <- pcaplot2(dataset = y_WUR, title.name = "PCA_WUR", Effect = "WUR")
 ggplotly(p)
 ggsave(p, filename = "../output/FinalModel_PCA_adjusted_data_except_WUR_voomWithQualityWeights.png")
+
+
 ```
 
 
